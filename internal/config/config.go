@@ -8,6 +8,7 @@ import (
 	"go/types"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/kyleconroy/sqlc/internal/pg"
@@ -145,11 +146,12 @@ type Override struct {
 	// fully qualified name of the column, e.g. `accounts.id`
 	Column string `json:"column" yaml:"column"`
 
-	ColumnName  string
-	Table       pg.FQN
-	GoTypeName  string
-	GoPackage   string
-	GoBasicType bool
+	ColumnName     string
+	Table          pg.FQN
+	GoTypeName     string
+	GoPackage      string
+	GoPackageAlias string
+	GoBasicType    bool
 }
 
 func (o *Override) Parse() error {
@@ -220,19 +222,20 @@ func (o *Override) Parse() error {
 		if lastSlash == -1 {
 			return fmt.Errorf("Package override `go_type` specifier %q is not the proper format, expected 'package.type', e.g. 'github.com/segmentio/ksuid.KSUID'", o.GoType)
 		}
-		typename = o.GoType[lastSlash+1:]
-		if strings.HasPrefix(typename, "go-") {
-			// a package name beginning with "go-" will give syntax errors in
-			// generated code. We should do the right thing and get the actual
-			// import name, but in lieu of that, stripping the leading "go-" may get
-			// us what we want.
-			typename = typename[len("go-"):]
-		}
-		if strings.HasSuffix(typename, "-go") {
-			typename = typename[:len(typename)-len("-go")]
-		}
+
 		o.GoPackage = o.GoType[:lastDot]
+		b, err := exec.Command("go", "list", "-f", "{{ .Name }}", o.GoPackage).Output()
+		if err != nil {
+			return err
+		}
+		pkgName := strings.TrimSpace(string(b))
+		typename = pkgName + o.GoType[lastDot:]
+
+		if pkgName != o.GoPackage[lastSlash+1:] {
+			o.GoPackageAlias = pkgName
+		}
 	}
+
 	o.GoTypeName = typename
 	isPointer := o.GoType[0] == '*'
 	if isPointer {

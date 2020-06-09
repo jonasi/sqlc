@@ -188,39 +188,39 @@ func UsesArrays(r Generateable, settings config.CombinedSettings) bool {
 }
 
 type fileImports struct {
-	Std []string
-	Dep []string
+	Std [][2]string
+	Dep [][2]string
 }
 
-func mergeImports(imps ...fileImports) [][]string {
+func mergeImports(imps ...fileImports) [][][2]string {
 	if len(imps) == 1 {
-		return [][]string{imps[0].Std, imps[0].Dep}
+		return [][][2]string{imps[0].Std, imps[0].Dep}
 	}
 
-	var stds, pkgs []string
+	var stds, pkgs [][2]string
 	seenStd := map[string]struct{}{}
 	seenPkg := map[string]struct{}{}
 	for i := range imps {
 		for _, std := range imps[i].Std {
-			if _, ok := seenStd[std]; ok {
+			if _, ok := seenStd[std[0]]; ok {
 				continue
 			}
 			stds = append(stds, std)
-			seenStd[std] = struct{}{}
+			seenStd[std[0]] = struct{}{}
 		}
 		for _, pkg := range imps[i].Dep {
-			if _, ok := seenPkg[pkg]; ok {
+			if _, ok := seenPkg[pkg[0]]; ok {
 				continue
 			}
 			pkgs = append(pkgs, pkg)
-			seenPkg[pkg] = struct{}{}
+			seenPkg[pkg[0]] = struct{}{}
 		}
 	}
-	return [][]string{stds, pkgs}
+	return [][][2]string{stds, pkgs}
 }
 
-func Imports(r Generateable, settings config.CombinedSettings) func(string) [][]string {
-	return func(filename string) [][]string {
+func Imports(r Generateable, settings config.CombinedSettings) func(string) [][][2]string {
+	return func(filename string) [][][2]string {
 		if filename == "db.go" {
 			return mergeImports(dbImports(r, settings))
 		}
@@ -238,9 +238,9 @@ func Imports(r Generateable, settings config.CombinedSettings) func(string) [][]
 }
 
 func dbImports(r Generateable, settings config.CombinedSettings) fileImports {
-	std := []string{"context", "database/sql"}
+	std := [][2]string{[2]string{"context", ""}, [2]string{"database/sql", ""}}
 	if settings.Go.EmitPreparedQueries {
-		std = append(std, "fmt")
+		std = append(std, [2]string{"fmt", ""})
 	}
 	return fileImports{Std: std}
 }
@@ -282,43 +282,43 @@ func interfaceImports(r Generateable, settings config.CombinedSettings) fileImpo
 		std["net"] = struct{}{}
 	}
 
-	pkg := make(map[string]struct{})
-	overrideTypes := map[string]string{}
+	pkg := make(map[[2]string]struct{})
+	overrideTypes := map[string][2]string{}
 	for _, o := range settings.Overrides {
 		if o.GoBasicType {
 			continue
 		}
-		overrideTypes[o.GoTypeName] = o.GoPackage
+		overrideTypes[o.GoTypeName] = [2]string{o.GoPackage, o.GoPackageAlias}
 	}
 
 	_, overrideNullTime := overrideTypes["pq.NullTime"]
 	if uses("pq.NullTime") && !overrideNullTime {
-		pkg["github.com/lib/pq"] = struct{}{}
+		pkg[[2]string{"github.com/lib/pq", ""}] = struct{}{}
 	}
 	_, overrideUUID := overrideTypes["uuid.UUID"]
 	if uses("uuid.UUID") && !overrideUUID {
-		pkg["github.com/google/uuid"] = struct{}{}
+		pkg[[2]string{"github.com/google/uuid", ""}] = struct{}{}
 	}
 
 	// Custom imports
 	for goType, importPath := range overrideTypes {
-		if _, ok := std[importPath]; !ok && uses(goType) {
+		if _, ok := std[importPath[0]]; !ok && uses(goType) {
 			pkg[importPath] = struct{}{}
 		}
 	}
 
-	pkgs := make([]string, 0, len(pkg))
+	pkgs := make([][2]string, 0, len(pkg))
 	for p, _ := range pkg {
 		pkgs = append(pkgs, p)
 	}
 
-	stds := make([]string, 0, len(std))
+	stds := make([][2]string, 0, len(std))
 	for s, _ := range std {
-		stds = append(stds, s)
+		stds = append(stds, [2]string{s, ""})
 	}
 
-	sort.Strings(stds)
-	sort.Strings(pkgs)
+	sort.Sort(sortedImports(stds))
+	sort.Sort(sortedImports(pkgs))
 	return fileImports{stds, pkgs}
 }
 
@@ -344,43 +344,43 @@ func modelImports(r Generateable, settings config.CombinedSettings) fileImports 
 	}
 
 	// Custom imports
-	pkg := make(map[string]struct{})
-	overrideTypes := map[string]string{}
+	pkg := make(map[[2]string]struct{})
+	overrideTypes := map[string][2]string{}
 	for _, o := range settings.Overrides {
 		if o.GoBasicType {
 			continue
 		}
-		overrideTypes[o.GoTypeName] = o.GoPackage
+		overrideTypes[o.GoTypeName] = [2]string{o.GoPackage, o.GoPackageAlias}
 	}
 
 	_, overrideNullTime := overrideTypes["pq.NullTime"]
 	if UsesType(r, "pq.NullTime", settings) && !overrideNullTime {
-		pkg["github.com/lib/pq"] = struct{}{}
+		pkg[[2]string{"github.com/lib/pq"}] = struct{}{}
 	}
 
 	_, overrideUUID := overrideTypes["uuid.UUID"]
 	if UsesType(r, "uuid.UUID", settings) && !overrideUUID {
-		pkg["github.com/google/uuid"] = struct{}{}
+		pkg[[2]string{"github.com/google/uuid"}] = struct{}{}
 	}
 
 	for goType, importPath := range overrideTypes {
-		if _, ok := std[importPath]; !ok && UsesType(r, goType, settings) {
+		if _, ok := std[importPath[0]]; !ok && UsesType(r, goType, settings) {
 			pkg[importPath] = struct{}{}
 		}
 	}
 
-	pkgs := make([]string, 0, len(pkg))
+	pkgs := make([][2]string, 0, len(pkg))
 	for p, _ := range pkg {
 		pkgs = append(pkgs, p)
 	}
 
-	stds := make([]string, 0, len(std))
+	stds := make([][2]string, 0, len(std))
 	for s, _ := range std {
-		stds = append(stds, s)
+		stds = append(stds, [2]string{s, ""})
 	}
 
-	sort.Strings(stds)
-	sort.Strings(pkgs)
+	sort.Sort(sortedImports(stds))
+	sort.Sort(sortedImports(pkgs))
 	return fileImports{stds, pkgs}
 }
 
@@ -479,46 +479,46 @@ func queryImports(r Generateable, settings config.CombinedSettings, filename str
 		std["net"] = struct{}{}
 	}
 
-	pkg := make(map[string]struct{})
-	overrideTypes := map[string]string{}
+	pkg := make(map[[2]string]struct{})
+	overrideTypes := map[string][2]string{}
 	for _, o := range settings.Overrides {
 		if o.GoBasicType {
 			continue
 		}
-		overrideTypes[o.GoTypeName] = o.GoPackage
+		overrideTypes[o.GoTypeName] = [2]string{o.GoPackage, o.GoPackageAlias}
 	}
 
 	if sliceScan() {
-		pkg["github.com/lib/pq"] = struct{}{}
+		pkg[[2]string{"github.com/lib/pq"}] = struct{}{}
 	}
 	_, overrideNullTime := overrideTypes["pq.NullTime"]
 	if uses("pq.NullTime") && !overrideNullTime {
-		pkg["github.com/lib/pq"] = struct{}{}
+		pkg[[2]string{"github.com/lib/pq"}] = struct{}{}
 	}
 	_, overrideUUID := overrideTypes["uuid.UUID"]
 	if uses("uuid.UUID") && !overrideUUID {
-		pkg["github.com/google/uuid"] = struct{}{}
+		pkg[[2]string{"github.com/google/uuid"}] = struct{}{}
 	}
 
 	// Custom imports
 	for goType, importPath := range overrideTypes {
-		if _, ok := std[importPath]; !ok && uses(goType) {
+		if _, ok := std[importPath[0]]; !ok && uses(goType) {
 			pkg[importPath] = struct{}{}
 		}
 	}
 
-	pkgs := make([]string, 0, len(pkg))
+	pkgs := make([][2]string, 0, len(pkg))
 	for p, _ := range pkg {
 		pkgs = append(pkgs, p)
 	}
 
-	stds := make([]string, 0, len(std))
+	stds := make([][2]string, 0, len(std))
 	for s, _ := range std {
-		stds = append(stds, s)
+		stds = append(stds, [2]string{s, ""})
 	}
 
-	sort.Strings(stds)
-	sort.Strings(pkgs)
+	sort.Sort(sortedImports(stds))
+	sort.Sort(sortedImports(pkgs))
 	return fileImports{stds, pkgs}
 }
 
@@ -985,7 +985,7 @@ package {{.Package}}
 
 import (
 	{{range imports .SourceName}}
-	{{range .}}"{{.}}"
+	{{range .}}{{ if index . 1 }} {{ index . 1 }}{{ end }}"{{index . 0}}"
 	{{end}}
 	{{end}}
 )
@@ -1096,7 +1096,7 @@ package {{.Package}}
 
 import (
 	{{range imports .SourceName}}
-	{{range .}}"{{.}}"
+	{{range .}}{{ if index . 1 }} {{ index . 1 }}{{ end }}"{{index . 0}}"
 	{{end}}
 	{{end}}
 )
@@ -1131,7 +1131,7 @@ package {{.Package}}
 
 import (
 	{{range imports .SourceName}}
-	{{range .}}"{{.}}"
+	{{range .}}{{ if index . 1 }} {{ index . 1 }}{{ end }}"{{index . 0}}"
 	{{end}}
 	{{end}}
 )
@@ -1182,7 +1182,7 @@ package {{.Package}}
 
 import (
 	{{range imports .SourceName}}
-	{{range .}}"{{.}}"
+	{{range .}}{{ if index . 1 }} {{ index . 1 }}{{ end }}"{{index . 0}}"
 	{{end}}
 	{{end}}
 )
@@ -1389,3 +1389,9 @@ func Generate(r Generateable, settings config.CombinedSettings) (map[string]stri
 	}
 	return output, nil
 }
+
+type sortedImports [][2]string
+
+func (s sortedImports) Len() int           { return len(s) }
+func (s sortedImports) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s sortedImports) Less(i, j int) bool { return s[i][0] < s[j][0] }
